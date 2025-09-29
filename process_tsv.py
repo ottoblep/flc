@@ -162,6 +162,101 @@ def print_report(report: pd.DataFrame) -> None:
     print(base_summary.to_string(index=False))
 
 
+def calculate_potential_trips(report: pd.DataFrame) -> pd.DataFrame:
+    """Return potential resource transfer trips sorted by transferable quantity."""
+
+    surpluses = report[report["DeficitSurplus"] < 0].copy()
+    deficits = report[report["DeficitSurplus"] > 0].copy()
+
+    if surpluses.empty or deficits.empty:
+        return pd.DataFrame(
+            columns=["Source", "Destination", "TotalPotential", "DistinctItems", "TopItems"]
+        )
+
+    surpluses["AvailableQuantity"] = surpluses["DeficitSurplus"].abs()
+    deficits["NeededQuantity"] = deficits["DeficitSurplus"].astype(int)
+
+    pairwise = surpluses.merge(
+        deficits,
+        on="CodeName",
+        suffixes=("_source", "_destination"),
+    )
+
+    pairwise = pairwise[pairwise["StockpileName_source"] != pairwise["StockpileName_destination"]]
+    if pairwise.empty:
+        return pd.DataFrame(
+            columns=["Source", "Destination", "TotalPotential", "DistinctItems", "TopItems"]
+        )
+
+    pairwise["TransferQuantity"] = pairwise[["AvailableQuantity", "NeededQuantity"]].min(axis=1)
+    pairwise = pairwise[pairwise["TransferQuantity"] > 0]
+
+    if pairwise.empty:
+        return pd.DataFrame(
+            columns=["Source", "Destination", "TotalPotential", "DistinctItems", "TopItems"]
+        )
+
+    pairwise["TransferQuantity"] = pairwise["TransferQuantity"].round().astype(int)
+
+    grouped = pairwise.groupby(["StockpileName_source", "StockpileName_destination"])
+
+    totals = grouped["TransferQuantity"].sum().astype(int).rename("TotalPotential")
+    distinct = grouped["CodeName"].nunique().astype(int).rename("DistinctItems")
+
+    aggregated = (
+        pd.concat([totals, distinct], axis=1)
+        .reset_index()
+        .rename(
+            columns={
+                "StockpileName_source": "Source",
+                "StockpileName_destination": "Destination",
+            }
+        )
+    )
+
+    def format_breakdown(group: pd.DataFrame) -> str:
+        breakdown = group.sort_values("TransferQuantity", ascending=False)[
+            ["CodeName", "TransferQuantity"]
+        ]
+        top_three = breakdown.head(3)
+        top_parts = [f"{code}: {int(qty)}" for code, qty in top_three.itertuples(index=False)]
+        if len(breakdown) > 3:
+            top_parts.append(f"+{len(breakdown) - 3} more")
+        return ", ".join(top_parts)
+
+    breakdown_lookup = {
+        (source, destination): format_breakdown(group)
+        for (source, destination), group in grouped
+    }
+
+    aggregated["TopItems"] = [
+        breakdown_lookup[(row.Source, row.Destination)]
+        for row in aggregated.itertuples(index=False)
+    ]
+
+    aggregated.sort_values("TotalPotential", ascending=False, inplace=True)
+    aggregated.reset_index(drop=True, inplace=True)
+    return aggregated
+
+
+def print_trips(trips: pd.DataFrame, limit: int | None = None) -> None:
+    if trips.empty:
+        print("\nNo potential trips found.")
+        return
+
+    printable = trips.copy()
+    if limit is not None and limit > 0:
+        printable = printable.head(limit)
+
+    print("\nPotential trips by transferable items:")
+    for row in printable.itertuples(index=False):
+        print(
+            f"{row.Source} -> {row.Destination}: "
+            f"{row.TotalPotential} items across {row.DistinctItems} types"
+        )
+        print(f"  Top items: {row.TopItems}")
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command")
@@ -178,6 +273,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         default=None,
         help="Optional path to write the detailed report as TSV",
+    )
+
+    trips_parser = subparsers.add_parser(
+        "trips", help="List potential supply trips sorted by transferable quantity"
+    )
+    trips_parser.add_argument(
+        "--data-root",
+        type=Path,
+        default=None,
+        help="Directory containing stockpiles.tsv, base_requirements/, and current_stock/",
+    )
+    trips_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Optional number of top trips to display (default: all)",
     )
 
     if (
@@ -198,6 +309,11 @@ def main() -> None:
         data_root = args.data_root or guess_data_root()
         report = build_requirement_report(data_root, args.output)
         print_report(report)
+    elif args.command == "trips":
+        data_root = args.data_root or guess_data_root()
+        report = build_requirement_report(data_root)
+        trips = calculate_potential_trips(report)
+        print_trips(trips, args.limit)
     else:
         # Default to report when no arguments are provided.
         report = build_requirement_report(guess_data_root())
