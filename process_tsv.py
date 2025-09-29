@@ -161,7 +161,13 @@ def print_report(report: pd.DataFrame) -> None:
         "DeficitSurplus",
     ]
 
-    printable = report[display_cols]
+    printable = report[display_cols].copy()
+    printable.sort_values(
+        by="DeficitSurplus",
+        key=lambda col: col.abs(),
+        ascending=False,
+        inplace=True,
+    )
     print("\nPer-item deficit (ideal - current):")
     print(printable.to_string(index=False))
 
