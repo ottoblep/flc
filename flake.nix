@@ -20,7 +20,7 @@
         cp process_tsv.py $out/bin/process_tsv
         chmod +x $out/bin/process_tsv
       '';
-      propagatedBuildInputs = [ ];
+      propagatedBuildInputs = [ pkgs.python3Packages.pandas ];
     };
 
     apps.${system}.default = {

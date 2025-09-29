@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import sys
-import csv
+import pandas as pd
 
 if len(sys.argv) != 2:
     print("Usage: process_tsv.py <tsv_file>")
@@ -10,12 +10,16 @@ if len(sys.argv) != 2:
 tsv_file = sys.argv[1]
 
 try:
-    with open(tsv_file, 'r', newline='') as f:
-        reader = csv.reader(f, delimiter='\t')
-        rows = list(reader)
-        print(f"Processed {len(rows)} rows.")
-        for i, row in enumerate(rows):
-            print(f"Row {i+1}: {row}")
+    df = pd.read_csv(tsv_file, sep='\t')
+    print(f"Processed TSV with {df.shape[0]} rows and {df.shape[1]} columns.")
+    print("Columns:", list(df.columns))
+    print("First 5 rows:")
+    print(df.head())
+    # Additional processing: if there are numeric columns, compute sum
+    numeric_cols = df.select_dtypes(include=['number']).columns
+    if not numeric_cols.empty:
+        print("Sum of numeric columns:")
+        print(df[numeric_cols].sum())
 except FileNotFoundError:
     print(f"Error: File '{tsv_file}' not found.")
     sys.exit(1)
