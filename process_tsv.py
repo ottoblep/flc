@@ -11,26 +11,6 @@ from typing import Iterable
 
 import pandas as pd
 
-
-def describe_tsv(tsv_file: Path) -> None:
-    """Print a quick summary of a TSV file."""
-
-    try:
-        df = pd.read_csv(tsv_file, sep="\t")
-    except FileNotFoundError as exc:  # pragma: no cover - user feedback path
-        raise SystemExit(f"Error: file '{tsv_file}' not found") from exc
-
-    print(f"Processed TSV with {df.shape[0]} rows and {df.shape[1]} columns.")
-    print("Columns:", list(df.columns))
-    print("First 5 rows:")
-    print(df.head())
-
-    numeric_cols = df.select_dtypes(include=["number"]).columns
-    if not numeric_cols.empty:
-        print("Sum of numeric columns:")
-        print(df[numeric_cols].sum())
-
-
 def normalise_stockpile_name(series: pd.Series) -> pd.Series:
     """Normalise stockpile names from inventory exports."""
 
@@ -186,9 +166,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command")
 
-    describe_parser = subparsers.add_parser("describe", help="Summarise an arbitrary TSV file")
-    describe_parser.add_argument("tsv_file", type=Path)
-
     report_parser = subparsers.add_parser("report", help="Generate stockpile requirement report")
     report_parser.add_argument(
         "--data-root",
@@ -217,9 +194,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    if args.command == "describe":
-        describe_tsv(args.tsv_file)
-    elif args.command == "report":
+    if args.command == "report":
         data_root = args.data_root or guess_data_root()
         report = build_requirement_report(data_root, args.output)
         print_report(report)
