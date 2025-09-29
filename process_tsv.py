@@ -7,7 +7,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Sequence
 
 import pandas as pd
 
@@ -17,6 +17,17 @@ def normalise_stockpile_name(series: pd.Series) -> pd.Series:
     cleaned = series.fillna("").astype(str).str.strip()
     cleaned = cleaned.str.replace(".png", "", regex=False)
     return cleaned
+
+
+def summarise_item_breakdown(items: Sequence[tuple[str, int]], limit: int | None = 3) -> str:
+    if not items:
+        return ""
+
+    display = items if limit is None else items[:limit]
+    parts = [f"{code}: {qty}" for code, qty in display]
+    if limit is not None and len(items) > limit:
+        parts.append(f"+{len(items) - limit} more")
+    return ", ".join(parts)
 
 
 def load_stockpiles(stockpiles_path: Path) -> pd.DataFrame:
@@ -214,32 +225,34 @@ def calculate_potential_trips(report: pd.DataFrame) -> pd.DataFrame:
         )
     )
 
-    def format_breakdown(group: pd.DataFrame) -> str:
-        breakdown = group.sort_values("TransferQuantity", ascending=False)[
+    def collect_breakdown(group: pd.DataFrame) -> list[tuple[str, int]]:
+        ordered = group.sort_values("TransferQuantity", ascending=False)[
             ["CodeName", "TransferQuantity"]
         ]
-        top_three = breakdown.head(3)
-        top_parts = [f"{code}: {int(qty)}" for code, qty in top_three.itertuples(index=False)]
-        if len(breakdown) > 3:
-            top_parts.append(f"+{len(breakdown) - 3} more")
-        return ", ".join(top_parts)
+        return [(code, int(qty)) for code, qty in ordered.itertuples(index=False)]
 
     breakdown_lookup = {
-        (source, destination): format_breakdown(group)
+        (source, destination): collect_breakdown(group)
         for (source, destination), group in grouped
     }
 
-    aggregated["TopItems"] = [
+    aggregated["ItemBreakdown"] = [
         breakdown_lookup[(row.Source, row.Destination)]
         for row in aggregated.itertuples(index=False)
     ]
+
+    aggregated["TopItems"] = aggregated["ItemBreakdown"].apply(summarise_item_breakdown)
 
     aggregated.sort_values("TotalPotential", ascending=False, inplace=True)
     aggregated.reset_index(drop=True, inplace=True)
     return aggregated
 
 
-def print_trips(trips: pd.DataFrame, limit: int | None = None) -> None:
+def print_trips(
+    trips: pd.DataFrame,
+    limit: int | None = None,
+    show_all_items: bool = False,
+) -> None:
     if trips.empty:
         print("\nNo potential trips found.")
         return
@@ -254,7 +267,14 @@ def print_trips(trips: pd.DataFrame, limit: int | None = None) -> None:
             f"{row.Source} -> {row.Destination}: "
             f"{row.TotalPotential} items across {row.DistinctItems} types"
         )
-        print(f"  Top items: {row.TopItems}")
+        if show_all_items and hasattr(row, "ItemBreakdown"):
+            items_text = summarise_item_breakdown(row.ItemBreakdown, limit=None)
+            label = "All items"
+        else:
+            items_text = getattr(row, "TopItems", "")
+            label = "Top items"
+        if items_text:
+            print(f"  {label}: {items_text}")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -290,6 +310,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Optional number of top trips to display (default: all)",
     )
+    trips_parser.add_argument(
+        "--all-items",
+        action="store_true",
+        help="Show the full item list for each trip instead of the top three",
+    )
 
     if (
         argv is None
@@ -313,7 +338,7 @@ def main() -> None:
         data_root = args.data_root or guess_data_root()
         report = build_requirement_report(data_root)
         trips = calculate_potential_trips(report)
-        print_trips(trips, args.limit)
+        print_trips(trips, args.limit, args.all_items)
     else:
         # Default to report when no arguments are provided.
         report = build_requirement_report(guess_data_root())
